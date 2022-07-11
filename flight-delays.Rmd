@@ -1,0 +1,697 @@
+---
+title: "Coursework in R"
+author: "Poonam Dasilva"
+date: "02/02/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+To begin the project the first thing is to set the working directory.
+```{r}
+setwd("C:/Users/Poonam/Desktop/Data Expo 2009")
+```
+
+## Import packages
+```{r}
+library(data.table)  #to import large data
+library(readr)       #to import data
+library(dplyr)       #data manipulation
+library(ggplot2)     #data visualisation
+library(tidyr)       #data wrangling
+library(RColorBrewer) #colour palette
+```
+
+## Prepareing a subset.
+
+I will use data from 2003, 2004 and 2005. From each year I will select a random sample of 2000 rows and combine the data into one file called delays.
+
+```{r}
+
+#r2003 <- fread("2003.csv") #load original 2003 files
+
+#set.seed(1)
+
+#r2003 <- slice_sample(r2003, n = 2000) #create a sample of 2000 rows
+
+#write_csv(r2003, file = "r2003.csv", col_names = TRUE) #save sample as csv
+```
+
+
+```{r}
+#r2004 <- fread("2004.csv") #load original 2004 files
+
+#set.seed(1)
+
+#r2004 <- slice_sample(r2004, n = 2000) #create a sample of 2000 rows
+
+#write_csv(r2004, file = "r2004.csv", col_names = TRUE) #save sample as csv
+```
+
+```{r}
+#r2005 <- fread("2005.csv") #load original 2005 files
+
+#set.seed(1)
+
+#r2005 <- slice_sample(r2005, n = 2000) #create a sample of 2000 rows
+
+#write_csv(r2005, file = "r2005.csv", col_names = TRUE) #save sample as csv
+```
+
+Read all 3 files and combine into 1 files called delays
+```{r}
+#r2003 <- read_csv("r2003.csv", col_names = TRUE)
+#r2004 <- read_csv("r2004.csv", col_names = TRUE)
+#r2005 <- read_csv("r2005.csv", col_names = TRUE)
+
+#delays <- rbind(r2003, r2004, r2005)
+
+#write_csv(delays, file = "delays-r.csv", col_names = TRUE)
+```
+
+## Importing files
+```{r}
+delays <- read_csv("delays-r.csv", col_names = TRUE)
+planes <- read_csv("plane-data.csv", col_names = TRUE)
+airports <- read_csv("airports.csv", col_names = TRUE)
+```
+
+## Data Cleaning
+
+#1- Delays dataframe
+```{r}
+#checking for missing values
+str(delays)
+colSums(is.na(delays)|delays =='') 
+```
+
+We can see that Deptime and DepDelay have the same no of missing values - 104 and ArrTime and ArrDelay have the same number of missing values - 122.
+CancellationCode has the highest number of missing values followed by the different types of delay that have 844 missing values. 
+
+```{r}
+delays %>% select(DepTime, CRSDepTime, DepDelay, ArrTime, CRSArrTime, ArrDelay, Cancelled) %>% filter(! complete.cases(ArrTime))
+```
+
+Where flight is not cancelled I will replace ArrDelay NA with DepDelay value. Because we can assume that if I flight departed late by 3 mins, it arrived late by 3mins.
+Where Cancelled is 1, I will replace both ArrDelay and DepDelay value with 0 
+
+```{r}
+
+delays <- delays %>%
+  mutate(ArrDelay = coalesce(ArrDelay, DepDelay))
+
+delays <- delays %>% mutate(DepDelay = ifelse(is.na(DepDelay), 0, DepDelay),
+                    ArrDelay = ifelse(is.na(ArrDelay), 0, ArrDelay))
+
+```
+
+I can replace the missing values in DepTime with the values in CRSDepTime. 
+I can also replace the missing values in ArrTime by CRSArrTime + ArrDelay
+```{r}
+delays <- delays %>%
+  mutate(DepTime = coalesce(DepTime, CRSDepTime))
+
+delays <- delays <- delays %>%
+  mutate(ArrTime = coalesce(ArrTime, CRSArrTime + ArrDelay)) 
+
+```
+
+I am left with the missing values in AirTime and ActulElapsedTime. 
+
+```{r}
+delays %>% select(DepDelay, ArrDelay, ActualElapsedTime, CRSElapsedTime, AirTime,TaxiIn, TaxiOut, Cancelled) %>% filter(! complete.cases(AirTime))
+```
+
+The missing values of AirTime can be calculated by, CRSElapsedTime - TaxiIn - TaxiOut
+
+The missing values of ActualElapsedTime can be calculated by = CRSElasedTime - DepDelay +ArrDelay
+
+But if the flights is cancelled then the value both columns can be 0. 
+
+```{r}
+
+delays$AirTime[delays$Cancelled == 1] <- 0
+delays$ActualElapsedTime[delays$Cancelled == 1] <- 0
+
+delays <- delays %>% 
+  mutate(AirTime = coalesce(AirTime, CRSElapsedTime -TaxiIn - TaxiOut))
+
+delays <- delays %>% 
+  mutate(ActualElapsedTime = coalesce(ActualElapsedTime, CRSElapsedTime -DepDelay - ArrDelay))
+
+delays$AirTime[delays$Cancelled == 1] <- 0
+delays$ActualElapsedTime[delays$Cancelled == 1] <- 0
+
+colSums(is.na(delays)|delays =='')
+```
+I will leave the missing values in the other columns as it is.
+
+I will now create a new column called TotalDelays which will be the addition of the DepDelay and ArrDelay column.
+
+Another column Delayed will take the value 0 if the Totaldelay is less than equal to 0
+and take the value 1 if the totalDelay is greater than 0. 
+```{r}
+delays <- delays %>% mutate(TotalDelays = ArrDelay + DepDelay)
+
+delays <- delays %>% mutate(Delayed = (TotalDelays = (ifelse(TotalDelays <= 0,'0','1'))))
+
+head(delays)
+```
+
+#2- Planes Dataframe
+
+```{r}
+#check for missing values
+colSums(is.na(planes)|planes =='')
+
+```
+All columns have the same number of missing values so I can drop these columns. 
+
+```{r}
+planes <- drop_na(planes)
+
+count(planes, year)
+```
+
+We are only interested in the Year column from this table. In the year column there are 145 None values and 3 values that have 0 that we need to replace. We can actually use the year in the Issue date column to replace the missing values. 
+
+```{r}
+filter(planes, year == 'None')
+
+#convert all None and 0000 values to NA
+planes$year[planes$year == 'None'] <- '0000'
+
+planes$year <- replace(planes$year, planes$year == '0000', NA)
+
+```
+
+I will now convert issue_date to datetime and create a new column called issue_year with only the year. 
+
+```{r}
+#convert issue_date to datetime
+planes[['issue_date']] <- strptime(planes[['issue_date']],format = "%m/%d/%Y")
+
+#create a new column
+planes$issue_year <- as.numeric(format(planes$issue_date, "%Y"))
+
+#convert year to numeric
+planes$year <- as.numeric(planes$year)
+
+#replace NA values
+planes <- planes %>%
+  mutate(year = coalesce(year, issue_year))
+
+```
+
+I will rename of year column to Year_Built and tailNum to TailNum so it is easy to join dataframes in later questions. 
+
+```{r}
+planes <- rename(planes, TailNum = tailnum)
+
+planes <- rename(planes, Year_Built = year)
+```
+
+#3 - Airports dataframe
+
+```{r}
+#check for missing values
+colSums(is.na(airports)|airports =='')
+```
+There are 12 missing values in city and state.
+```{r}
+airports %>% select( everything()) %>% filter(! complete.cases(city))
+
+```
+since there isnt a way to replace these values I will drop these columns.
+```{r}
+ 
+airports <- drop_na(airports)
+
+distinct(airports, city) %>% arrange(city)
+```
+
+One city Abilene is recorded twice, once as Abilene and once as Abilene. I will rectify this. 
+
+```{r}
+airports <- airports %>% mutate(city = replace(city, match("K78",iata), "Abilene")) 
+
+distinct(airports, city) %>% arrange(city)
+```
+
+Now that the data looks clean I will begin answering the questions.
+
+## Q1 - When is the best time of the day, day of week and time of year to fly to minimise delays?
+
+```{r}
+delays %>% select(Year, Month, DayofMonth, DayOfWeek,TotalDelays,Delayed, Cancelled ) %>% head(20)
+```
+Count the most occuring Month, DayofWeek and DepTime when flight is not delayed and not cancelled. 
+
+```{r}
+delays %>% select(Year, Month, DayofMonth, DayOfWeek, DepTime, Delayed, Cancelled) %>% filter(Delayed == 0 & Cancelled == 0) %>%  group_by(Month) %>% count(sort = TRUE)
+```
+
+```{r}
+ggplot(delays) + geom_bar(aes(x = Month, fill = Delayed), position = position_dodge())+ labs(title = "Best time of year to fly to minimise delays", x = "Months") + scale_fill_brewer(palette = "Accent") + theme_classic()
+```
+The month with the highest number of non-delayed flights is September hece it is the best time to fly to minise delays.
+
+```{r}
+#best time of the Week
+delays %>% select(Year, Month, DayofMonth, DayOfWeek, DepTime, ArrDelay, DepDelay, Delayed, Cancelled) %>% filter(Delayed == 0 & Cancelled == 0) %>%  group_by(DayOfWeek) %>% count(sort = TRUE)
+
+```
+```{r}
+ggplot(delays) + geom_bar(aes(x = DayOfWeek, fill = Delayed), position = position_dodge())+ labs(title = "Best Day of Week to minimise delays", x = "Day of Week 1:Monday - 7:Sunday") + scale_fill_brewer(palette = "Accent") + theme_classic()
+```
+
+The best Day of Week to fly is both Tuesday and Wednesday. 
+
+```{r}
+#best time of day
+
+#creating a column that divides the Deptime by Hour
+delays <- delays %>% mutate(DepHour = case_when(CRSDepTime <=59 ~ 0,
+                                        CRSDepTime <=159 ~ 1, CRSDepTime <=559 ~ 5,
+                                        CRSDepTime <=259 ~ 2, CRSDepTime <=659 ~ 6,
+                                        CRSDepTime <=359 ~ 3, CRSDepTime <=759 ~ 7,
+                                        CRSDepTime <=459 ~ 4, CRSDepTime <=859 ~ 8,
+                                        CRSDepTime <=959 ~ 9, CRSDepTime <=1059 ~ 10,
+                                        CRSDepTime <=1159 ~ 11, CRSDepTime <=1259 ~ 12,
+                                        CRSDepTime <=1359 ~ 13, CRSDepTime <=1459 ~ 14,
+                                        CRSDepTime <=1559 ~ 15, CRSDepTime <=1659 ~ 16,
+                                        CRSDepTime <=1759 ~ 17, CRSDepTime <=1859 ~ 18,
+                                        CRSDepTime <=1959 ~ 19, CRSDepTime <=2059 ~ 20,
+                                        CRSDepTime <=2159 ~ 21, CRSDepTime <=2259 ~ 22,
+                                        CRSDepTime <=2359 ~ 23) ) 
+
+#counting the most recurrent hour with no delays
+delays %>% select(Year, Month, DayofMonth, DayOfWeek, DepHour, ArrDelay, DepDelay, Delayed, Cancelled) %>% filter(Delayed == 0 & Cancelled == 0) %>%  group_by(DepHour) %>% count(sort = TRUE)
+
+```
+
+```{r}
+ggplot(delays) + geom_bar(aes(x = DepHour, fill = Delayed), position = position_dodge()) + labs(title = "Best Time of Day to minimise delays", x = "Time of Day") + scale_fill_brewer(palette = "Accent") + theme_classic()
+```
+
+The best time of day to fly to minimise delays is at 8 am in morning. 
+
+## Q2 -Do older planes suffer more delays?
+
+To answer this question I will use the year column from the planes data. 
+
+The average age for a commerical plane to be considered young is 20 years.[reference](https://www.thehindubusinessline.com/specials/flight-plan/what-commercial-airlines-can-do-to-extend-the-longevity-of-their-fleet/article34805181.ece). So if the plane was built before 1984, it is old or else not old.
+
+I will construct a new column that takes the value old if the plane was built before 1984 and not old if it was built after that. 
+
+```{r}
+planes<- planes %>% mutate(age = case_when(
+  Year_Built < 1984 ~ "old",
+  Year_Built >= 1984 ~ "not old"
+))
+```
+
+I will now join the planes dataframe with the delays dataframe by the column TailNum
+
+```{r}
+q2_a <- inner_join(delays, planes, by = "TailNum") %>% select(TailNum, TotalDelays, age) 
+head(q2_a)
+```
+To find out if older planes suffer more delays, I will calculate the mean delay in mins by each group. 
+
+```{r}
+inner_join(delays, planes, by = "TailNum") %>% select(TailNum, TotalDelays, age) %>% group_by(age) %>% summarise(mean(TotalDelays))
+
+```
+```{r}
+ggplot(q2_a) + aes(x = TotalDelays, colour = age) + geom_density(size = 2) + labs(title = "Delays in planes by age", x= "Total Delays in mins" ) + lims(x = c(NA, 120)) +scale_colour_brewer(palette = "Accent")
+```
+Older planes have a mean delay of 12:85 mins
+and Younger planes have a mean delay of 11:53 mins
+We can see that the mean delays in mins for older planes and not old planes are very close. When we look at the distribution of the two variables. Older planes have a wider spread around the mean and a shorter peak. Since one minute can make a huge difference, we can conclude that older planes suffer more or longer delays.
+
+
+## Q3 - How does the number of flights change between locations over time?
+
+I will use the airports dataframe to get the names of the city and state between the locations. I will join the airports and delays dataframe by the Origin and Dest columns. 
+```{r}
+q3_a <- delays %>% select(Year, Origin, Dest)
+
+#inner join by origin column and iata column
+origin <- inner_join(q3_a, airports  , by = c("Origin" = "iata"))  %>% rename("Origin_City" = city, "Origin_State" = state , "Origin_Country" = country) %>% select(Year, Origin, Origin_City, Origin_State, Origin_Country, Dest)
+
+#inner join above table by Dest column and iata column
+schedule <- inner_join(origin, airports  , by = c("Dest" = "iata"))  %>% rename("Dest_City" = city, "Dest_State" = state , "Dest_Country" = country) %>% select(Year, Origin, Origin_City, Dest, Dest_City)
+
+head(schedule)
+```
+
+I will group the data by Year ,Origin and Dest and then count the number of values in each group. 
+
+```{r}
+q3_b <- schedule %>% group_by(Year, Origin_City, Dest_City)  %>% count(sort = TRUE)
+
+head(q3_b)
+```
+
+I will now convert data from long to wide  data by column = year and values = n
+
+```{r}
+flight_movt <-spread(q3_b, Year, n)
+
+head(flight_movt)
+```
+
+Convert all NA values to 0 and sort the table in descending order by year 2003. 
+
+```{r}
+flight_movt[is.na(flight_movt)] =  0
+
+arrange(flight_movt , desc(flight_movt$`2003`, flight_movt$`2004`)) 
+```
+
+We can see the number of flights change from one city to the other city over the year. So we can see that there were 8 flights between Boston and Arlington in 2003, 6 flights in 2004 and 2 flights in 2005. 
+
+##Q4 - Can you detect cascading failures as delays in one airport create delays in others?
+
+To answer this question I am going to track a single plane by it TailNum and see if it is delayed as it flies through the day. 
+
+First I will find the most frequently occurring TailNum on a particular day in my subset.
+```{r}
+delays %>% select(Year, Month, DayofMonth, TailNum) %>% group_by(Year, Month, DayofMonth, TailNum) %>% count(sort = TRUE)
+```
+Checking to see it TailNum 0 is a real plane or a wrong entry. 
+
+```{r}
+filter(planes, TailNum == 0)
+```
+
+There is no plane with Tailnum 0, I can inspect the next 3 cases where the flight makes 2 trips in a Day to see if it is has cascading delays.
+
+```{r}
+#Case 1 - 21 March - 2003
+delays %>% 
+  select(Year, Month, DayofMonth, TailNum, DepTime, DepDelay, Origin, ArrTime, ArrDelay, Dest, Delayed) %>% 
+  filter(Year == 2003, Month == 3, DayofMonth == 21, TailNum == 'N632')
+```
+
+On the first trip the flight departs and arrives late at BNA ariport. On the second trip the flight departs on time from BNA airport and arrives late. Both trips are delayed but we cannot conclude that a delay in the first airport lead to a delay in the second. 
+
+```{r}
+#Case 2- 30 March 2003
+delays %>% 
+  select(Year, Month, DayofMonth, TailNum, DepTime, DepDelay, Origin, ArrTime, ArrDelay, Dest, Delayed, Cancelled) %>% 
+  filter(Year == 2003, Month == 3, DayofMonth == 30, TailNum == 'N934SW') %>% 
+  arrange(DepTime)
+```
+This flight is not delayed and the two trips are far apart, so it doesn't help towards our conclusion. 
+
+```{r}
+#Case 3 - 14 April 2004
+delays %>% 
+  select(Year, Month, DayofMonth, TailNum, DepTime, DepDelay, Origin, ArrTime, ArrDelay, Dest, Delayed, Cancelled) %>% 
+  filter(Year == 2004, Month == 4, DayofMonth == 14, TailNum == 'N909EV') %>% 
+  arrange(DepTime)
+```
+
+The first trip is not delayed but the second one is by 2mins, we cannot conclude cascading delays.
+
+I wil try to look for the answer by finding the day that has the most number of rows in the subset to see if I can track cascading delays across the airports. 
+
+```{r}
+delays %>% select(Year, Month, DayofMonth) %>% group_by(Year, Month, DayofMonth)%>% count(sort = TRUE)
+```
+
+```{r}
+delays %>% 
+  select(Year, Month, DayofMonth, TailNum, DepTime, DepDelay, Origin, ArrTime, ArrDelay, Dest, Delayed, Cancelled) %>% 
+  filter(Year == 2005, Month ==1, DayofMonth == 31) %>% 
+  arrange(DepTime)
+```
+The top 3 days that occur most often in my subset still do not provide sufficient information to answer this question.
+
+I will know look at my data to see if I have any data where the Previous flight's Dest airport is the same as the Origin airport within the same time span. This will help me find arives and departs from the same airport in a sequence.
+
+```{r}
+q4_a <- delays %>% 
+  select(Year, Month, DayofMonth, TailNum, DepTime, DepDelay, Origin, ArrTime, ArrDelay, Dest, Delayed) %>% 
+  arrange(Year, Month, DayofMonth, DepTime)
+```
+
+Create a column with lagged Dest values. 
+Selecting only those rows where Origin == lagged Dest. 
+
+```{r}
+q4_a <- q4_a %>% mutate(Lagged = lag(Dest, n = 1, default = NA))
+
+head(q4_a)
+```
+Counting the number of occurrences where Origin airport is the same as Lagged by the day.
+
+```{r}
+q4_a %>%
+  select(Year, Month, DayofMonth, TailNum, DepTime, DepDelay, Origin, ArrTime, ArrDelay, Dest, Lagged, Delayed) %>%
+  filter(Origin == Lagged & Delayed == 1) %>% 
+  group_by(Year, Month, DayofMonth) %>% 
+  count(sort = TRUE)
+```
+
+
+Inspecting each of the top three days in detail. 
+```{r}
+#On 7th December 2003
+delays %>% 
+  select(Year, Month, DayofMonth, TailNum, DepTime, DepDelay, Origin, ArrTime, ArrDelay, Dest, Delayed) %>% 
+  filter(Year == 2003, Month ==12, DayofMonth == 7) %>% 
+  arrange(DepTime)
+```
+
+Here we can see a flight lands late at DFW airport at 10:52pm. Then a flight departs 101 mins late from DFW airport at 14:47pm arrives late at LAS airport so it is also delayed. The next flight takes off early by lands 8 mins late at DFW. Hence all three trips are delayed.
+
+```{r}
+#on 21st March 2005
+delays %>% 
+  select(Year, Month, DayofMonth, TailNum, DepTime, DepDelay, Origin, ArrTime, ArrDelay, Dest, Delayed) %>% 
+  filter(Year == 2005, Month ==3, DayofMonth == 21) %>% 
+  arrange(DepTime)
+```
+
+Flight arriving at 16:05 at JFK is delayed as well as the flight taking off at 17:31 from JFK is delayed. This flight is delayed at arrivale as well for 18  mins. Here too both flights are delayed. 
+
+```{r}
+delays %>% 
+  select(Year, Month, DayofMonth, TailNum, DepTime, DepDelay, Origin, ArrTime, ArrDelay, Dest, Delayed, Cancelled) %>% 
+  filter(Year == 2004, Month ==1, DayofMonth == 19) %>% 
+  arrange(DepTime)
+```
+I do not have sufficient evidence to conclude cascading delays in airports. 
+
+## Q5 - Use the available variables to construct a model that predicts delays. 
+
+This is a machine learning question. I will start this question by choosing my features. To choose feature variables for the model I will perform some data exploration to see correlation. I have mapped out some questions to choose the variables. 
+ 
+*1- Is there a higher delay on the weekends?* 
+
+The DayofWeek coloumn is already classified coloumn where 1- Monday and 7- Sunday. We are interested to see it flights have higher delays on 5- Friday, 6- Saturday and 7- Sunday.
+
+```{r}
+ggplot(delays) + geom_bar(aes(x = DayOfWeek, fill = Delayed), position = position_dodge())+ labs(title = "Delays by Day of Week", x = "Days of Week 0:Monday - 7:Sunday") + scale_fill_brewer(palette = "Accent") + theme_classic()
+```
+Fridays have the highest number of delays across all the other days in the week. 
+
+*2- Are there more delays during the holiday months?* 
+
+In USA the school holidays are between June and Aug and the general holidays are between Nov and Dec when people are travelling for Thanksgiving and Christmas. Lets check if these months have high delays.
+
+```{r}
+ggplot(delays) + geom_bar(aes(x = Month, fill = Delayed), position = position_dodge())+ labs(title = "Delays by Month", x = "Months") + scale_fill_brewer(palette = "Accent") + theme_classic()
+```
+
+We can see that December has the highest number of delays followed by the month of July. August and September also have a high number of delays.Yes, holiday time does influence delays. 
+
+*3- At what time of day are delays more frequent?*
+
+```{r}
+ggplot(delays) + geom_bar(aes(x = DepHour, fill = Delayed), position = position_dodge()) + labs(title = "Best Time of Day to minimise delays", x = "Time of Day") + scale_fill_brewer(palette = "Accent") + theme_classic()
+```
+
+Hours between 15:00pm - 19:00pm experience the most delays in the day. 
+
+*4- Do long distance flights experience more delays?*
+
+```{r}
+ggplot(delays) + geom_boxplot(aes(y = Distance, fill = Delayed), alpha = 0.8) + labs(title = "Averge Distance based on Delays", x= "Delayed", y = "Distance")   + facet_grid(~Delayed)+ scale_fill_brewer(palette = "Accent") + ylim(200,1500) + geom_hline(aes(yintercept = 600))
+
+```
+Delayed flights have a higher mean distance than flights that are not delayed flights. 
+
+*5- What is the correlation between TaxiIn and TaxiOut and Delays?*
+
+```{r}
+ggplot(delays) + geom_point(aes(x = TaxiIn, y = TaxiOut, colour = Delayed, fill = Delayed)) + labs(title = "Correlation between TaxiIn and TaxiOut", x= "Taxi In in mins", y = "Taxi Out in mins") + xlim(NA,75) + ylim(NA,150) + scale_colour_brewer(palette = "Accent") + theme_classic() 
+```
+TaxiIn and TaxiOut do not have any linear relationship. We can see sometimes the TaxiIn time is short but the TaxiOut takes long causing delays and vice- versa. But when either goes beyond 50 mins we see that the flight is delayed.
+
+I will now choose my features.
+
+*Features*
+Categorical 
+Year, Month, DayofMonth, DayofWeek, DepHour, Cancelled, Diverted
+
+Numeric 
+DepDelay, Distance, TaxiIn , TaxiOut, AirTime, ActualElapsedTime, SecurityDelay , NASDelay, WeatherDelay, CarrierDelay, LateAircraftDelay
+
+Since my target variable Delayed is constructed by DepDelay and ArrDelay, I will only give the model DepDelay as a feature to see if it can predict ArrDelays well. 
+
+*Target*
+Delayed
+
+I will create a new table called delaysML that only has the above features. 
+
+```{r}
+delaysML <- delays %>% select(Year, Month, DayofMonth, DayOfWeek, DepHour, DepDelay, Distance,
+                  TaxiIn, TaxiOut, AirTime, Cancelled, Diverted, ActualElapsedTime, 
+                  SecurityDelay, NASDelay, WeatherDelay, CarrierDelay, LateAircraftDelay, Delayed)
+
+head(delaysML)
+```
+
+*Import Libraries for Machine Learning*
+
+```{r}
+library(mlr3)
+library(mlr3learners)
+library(mlr3pipelines)
+library(mlr3tuning)
+library(mlr3viz)
+library(xgboost)
+```
+
+Convert categorical features into factors.
+
+```{r}
+
+delaysML$Cancelled <- factor(delaysML$Cancelled)
+delaysML$Diverted <- factor(delaysML$Diverted)
+delaysML$DayOfWeek <- factor(delaysML$DayOfWeek)
+delaysML$DepHour <- factor(delaysML$DepHour)
+delaysML$Year <- factor(delaysML$Year)
+delaysML$DayofMonth <- factor(delaysML$DayofMonth)
+delaysML$Month <- factor(delaysML$Month)
+delaysML$Delayed <- factor(delaysML$Delayed)
+
+str(delaysML)
+```
+split into Train and test dataset by 50-50
+
+```{r}
+n <- nrow(delaysML)
+train_set <- sample(n, round(0.5*n))
+test_set <- setdiff(1:n, train_set)
+```
+
+Setting up the target and the Task
+
+```{r}
+task <- TaskClassif$new('delaysML', backend=delaysML, target = 'Delayed')
+task$select(c('Year', 'Month', 'DayofMonth', 'DayOfWeek', 'DepHour', 'DepDelay', 'Distance','TaxiIn', 'TaxiOut', 'AirTime', 'Cancelled', 'Diverted', 'ActualElapsedTime', 'SecurityDelay', 'NASDelay', 'WeatherDelay', 'CarrierDelay', 'LateAircraftDelay'))
+measure <- msr('classif.ce')
+task
+```
+
+I will use 4 classification models and then evaluate based on the lowest classification error. 
+- Logistic Regression
+- Gradient Boosting
+- Classification Trees
+- Support Vector Machines.
+
+
+1- Logistic Regression
+
+```{r}
+learner_lr <- lrn("classif.log_reg")
+gc_lr <- po('imputemean') %>>%
+  po(learner_lr)
+glrn_lr <- GraphLearner$new(gc_lr)
+
+glrn_lr$train(task, row_ids = train_set)
+glrn_lr$predict(task, row_ids = test_set)$score() 
+```
+2 - Gradient Boosting
+
+Gradient Boosting does not support factor so I will convert it to numeric.
+
+```{r}
+fencoder <- po("encode", method = "treatment",
+  affect_columns = selector_type("factor"))
+ord_to_int <- po("colapply", applicator = as.integer,
+  affect_columns = selector_type("ordered"))
+```
+
+```{r}
+learner_gb <- lrn("classif.xgboost")
+gc_gb <- po('imputemean') %>>%
+  fencoder %>>% ord_to_int %>>%
+  po(learner_gb)
+glrn_gb <- GraphLearner$new(gc_gb)
+
+glrn_gb$train(task, row_ids = train_set)
+glrn_gb$predict(task, row_ids = test_set)$score()
+```
+3- Classification Trees
+
+```{r}
+learner_tree <- lrn("classif.rpart")
+
+gc_tree <- po('imputemean') %>>%
+  po(learner_tree)
+glrn_tree <- GraphLearner$new(gc_tree)
+
+glrn_tree$train(task, row_ids = train_set)
+glrn_tree$predict(task, row_ids = test_set)$score()
+```
+
+4- Support Vector Machines
+
+```{r}
+learner_svm <- lrn("classif.svm")
+
+gc_svm <- po('imputemean') %>>% 
+  fencoder %>>% ord_to_int %>>%
+  po(learner_svm)
+glrn_svm <- GraphLearner$new(gc_svm)
+
+glrn_svm$train(task, row_ids = train_set)
+glrn_svm$predict(task, row_ids = test_set)$score()
+```
+
+Benchmarking
+
+```{r}
+set.seed(1) # for reproducible results
+# list of learners
+lrn_list <- list(
+  glrn_lr,
+  glrn_gb,
+  glrn_tree,
+  glrn_svm
+)
+# set the benchmark design and run the comparisons
+bm_design <- benchmark_grid(task = task, resamplings = rsmp('cv', folds = 3), learners = lrn_list)
+bmr <- benchmark(bm_design, store_models = TRUE)
+```
+
+Plot 
+```{r}
+autoplot(bmr) + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Table with Classification errors.
+```{r}
+bmr$aggregate(measure)
+```
+
+Logistic Regression has the lowest classification error of 0.109 and hence this is the best model. 
+
